@@ -23,6 +23,7 @@ import * as fs from "../../util/fs";
 import getVortexPath from "../../util/getVortexPath";
 import makeReactive from "../../util/makeReactive";
 import opn from "../../util/opn";
+import { type DirEntryCache, resolveFileCase } from "../../util/resolvePathCase";
 import { getSafe } from "../../util/storeHelper";
 import { batchDispatch, delay, setdefault } from "../../util/util";
 import { discoveryByGame } from "../gamemode_management/selectors";
@@ -83,6 +84,7 @@ import PluginHistory from "./util/PluginHistory";
 import { makeSetPluginLight } from "./util/pluginLight";
 import PluginPersistor from "./util/PluginPersistor";
 import { copyIgnoringMissing, swapUserlistForProfile, userlistPaths } from "./util/profileUserlist";
+import { requirementExists } from "./util/requirementExists";
 import { pluginLink, showPluginCallbacks } from "./util/showPlugin";
 import { SpanAttribute } from "./util/spanAttributes";
 import { makeUpdatePluginList } from "./util/updatePluginList";
@@ -268,10 +270,10 @@ function register(
 
   for (const gameId of supportedGames()) {
     context.registerProfileFile(gameId, () =>
-      Bluebird.resolve([path.join(pluginPath(gameId), "plugins.txt")]),
+      Bluebird.resolve(resolveFileCase(pluginPath(gameId), "plugins.txt")).then((p) => [p]),
     );
     context.registerProfileFile(gameId, () =>
-      Bluebird.resolve([path.join(pluginPath(gameId), "loadorder.txt")]),
+      Bluebird.resolve(resolveFileCase(pluginPath(gameId), "loadorder.txt")).then((p) => [p]),
     );
   }
 
@@ -484,28 +486,30 @@ function testPluginsLocked(gameMode: string): Bluebird<ITestResult> {
     return Bluebird.resolve(undefined);
   }
 
-  const filePath = path.join(pluginPath(gameMode), "plugins.txt");
-  return new Bluebird<ITestResult>((resolve, reject) => {
-    access(filePath, constants.W_OK, (err) => {
-      if (err && err.code === "EPERM") {
-        const res: ITestResult = {
-          description: {
-            short: "plugins.txt is write protected",
-            long:
-              "This file is used to control which plugins the game uses and while it's " +
-              "write protected Vortex will not be able to enable or disable plugins.\n" +
-              'If you click "fix" the file will be marked writable.',
-          },
-          severity: "error",
-          automaticFix: () => fs.chmodAsync(filePath, parseInt("0777", 8)),
-        };
+  return Bluebird.resolve(resolveFileCase(pluginPath(gameMode), "plugins.txt")).then(
+    (filePath) =>
+      new Bluebird<ITestResult>((resolve) => {
+        access(filePath, constants.W_OK, (err) => {
+          if (err && err.code === "EPERM") {
+            const res: ITestResult = {
+              description: {
+                short: "plugins.txt is write protected",
+                long:
+                  "This file is used to control which plugins the game uses and while it's " +
+                  "write protected Vortex will not be able to enable or disable plugins.\n" +
+                  'If you click "fix" the file will be marked writable.',
+              },
+              severity: "error",
+              automaticFix: () => fs.chmodAsync(filePath, parseInt("0777", 8)),
+            };
 
-        resolve(res);
-      } else {
-        resolve();
-      }
-    });
-  });
+            resolve(res);
+          } else {
+            resolve();
+          }
+        });
+      }),
+  );
 }
 
 function testMissingGroupsImpl(
@@ -982,13 +986,9 @@ function testRulesUnfulfilled(api: IExtensionApi): Bluebird<ITestResult> {
   // checks.
 
   const dataPath = gameDataPath(gameMode);
+  const dirCache: DirEntryCache = new Map();
   const exists = (id: string): Bluebird<boolean> =>
-    [".esp", ".esl", ".esm"].includes(path.extname(id))
-      ? Bluebird.resolve(pluginsSet.has(id))
-      : fs
-          .statAsync(path.resolve(dataPath, id))
-          .then(() => true)
-          .catch((err) => false);
+    Bluebird.resolve(requirementExists(dataPath, id, pluginsSet, dirCache));
 
   return Bluebird.map(Object.keys(reqCheck), (reqId) =>
     exists(reqId).then((existsRes) => {
