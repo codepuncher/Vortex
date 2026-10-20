@@ -1,5 +1,5 @@
 import type { GameFacts, StagedFile } from "./gameFacts";
-import { FileSourceKind, type FileSource, type Lockfile } from "./lockfile";
+import { byDestinationPath, FileSourceKind, type FileSource, type Lockfile } from "./lockfile";
 import type { IMod, IState } from "./state";
 
 /** The mod source ids Vortex registers, as IMod.attributes.source holds them. */
@@ -54,9 +54,6 @@ export function resolve(state: IState, gameFacts: GameFacts): Lockfile {
     }
   }
 
-  // destinations are unique
-  const files = [...fileByDestination.values()].toSorted((lhs, rhs) =>
-    lhs.destinationPath < rhs.destinationPath ? -1 : 1,
-  );
+  const files = [...fileByDestination.values()].toSorted(byDestinationPath);
   return { version: 1, gameId, gameVersion, storeId, files };
 }

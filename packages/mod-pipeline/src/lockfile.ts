@@ -17,8 +17,24 @@ export type FileSource =
       fileHash: string;
       destinationPath: string;
     }
-  | { source: typeof FileSourceKind.VortexGenerated; fileHash: string; destinationPath: string }
+  | {
+      source: typeof FileSourceKind.VortexGenerated;
+      fileHash: string;
+      destinationPath: string;
+      /** base64 of the file's exact bytes */
+      content: string;
+    }
   | { source: typeof FileSourceKind.UserGenerated; fileHash: string; destinationPath: string };
+
+/** A file Vortex or a game extension writes during a deployment. */
+export type GeneratedFileSource = Extract<
+  FileSource,
+  { source: typeof FileSourceKind.VortexGenerated }
+>;
+
+/** Orders lockfile files by destination; destinations are unique. */
+export const byDestinationPath = (lhs: FileSource, rhs: FileSource): number =>
+  lhs.destinationPath < rhs.destinationPath ? -1 : 1;
 
 /** The resolved files of one game, the Plan step's input. */
 export interface Lockfile {
@@ -40,6 +56,7 @@ const fileSourceSchema = z.discriminatedUnion("source", [
     source: z.literal(FileSourceKind.VortexGenerated),
     fileHash: z.string(),
     destinationPath: z.string(),
+    content: z.string(),
   }),
   z.object({
     source: z.literal(FileSourceKind.UserGenerated),

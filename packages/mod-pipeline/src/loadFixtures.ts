@@ -11,7 +11,8 @@ export interface ILoadedFixture {
   fixture: ResolverFixture;
 }
 
-function loadFixture(fileName: string): ILoadedFixture {
+/** One resolver fixture, by file name. */
+export function loadFixture(fileName: string): ILoadedFixture {
   const parsed = ResolverFixtureSchema.safeParse(
     JSON.parse(readFileSync(path.join(FIXTURE_DIR, fileName), "utf8")),
   );
