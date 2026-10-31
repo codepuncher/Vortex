@@ -1,16 +1,8 @@
-import {
-  mdiAccount,
-  mdiDotsVertical,
-  mdiGog,
-  mdiMicrosoftXbox,
-  mdiSteam,
-  mdiUbisoft,
-} from "@mdi/js";
 import React, { type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { Tier } from "@/extensions/gamemode_management/tiered/types";
-import { Icon } from "@/ui/components/icon/Icon";
+import { Icon, type IIconSource } from "@/ui/components/icon/Icon";
 import { Image } from "@/ui/components/image/Image";
 import { Pill } from "@/ui/components/pill/Pill";
 import { Popover } from "@/ui/components/popover/Popover";
@@ -20,19 +12,26 @@ import { PopoverButton } from "@/ui/components/popover/PopoverButton";
 import { PopoverPanel } from "@/ui/components/popover/PopoverPanel";
 import { Tooltip } from "@/ui/components/tooltip/Tooltip";
 import { Typography } from "@/ui/components/typography/Typography";
-import { nxmElectronicArts, nxmEpicGames } from "@/ui/icon-paths";
+import {
+  nxmElectronicArts,
+  nxmEpicGames,
+  nxmGog,
+  nxmSteam,
+  nxmUbisoft,
+  nxmXbox,
+} from "@/ui/icon-paths";
 import { joinClasses } from "@/ui/utils/joinClasses";
 
 const titleCase = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
 /** Known stores, keyed by the id `IDiscoveryResult.store` carries. */
-const STORES: Record<string, { iconPath: string; label: string }> = {
-  epic: { iconPath: nxmEpicGames, label: "Epic" },
-  gog: { iconPath: mdiGog, label: "GOG" },
-  origin: { iconPath: nxmElectronicArts, label: "Origin" },
-  steam: { iconPath: mdiSteam, label: "Steam" },
-  uplay: { iconPath: mdiUbisoft, label: "Ubisoft" },
-  xbox: { iconPath: mdiMicrosoftXbox, label: "Xbox" },
+const STORES: Record<string, { icon: IIconSource; label: string }> = {
+  epic: { icon: { path: nxmEpicGames }, label: "Epic" },
+  gog: { icon: { path: nxmGog }, label: "GOG" },
+  origin: { icon: { path: nxmElectronicArts }, label: "Origin" },
+  steam: { icon: { path: nxmSteam }, label: "Steam" },
+  uplay: { icon: { path: nxmUbisoft }, label: "Ubisoft" },
+  xbox: { icon: { path: nxmXbox }, label: "Xbox" },
 };
 
 export interface IGameTileProps {
@@ -107,21 +106,21 @@ export const GameTile = ({
             className="group/tile absolute inset-0 z-1 flex flex-col justify-between overflow-hidden bg-linear-to-t from-scrim-strong via-scrim-moderate via-30% to-scrim-weak to-85% p-3"
             data-menu-open={open || undefined}
           >
-            <div className="flex gap-x-4">
-              {!!supportTier && (
-                <Pill appearance="scrim" brand="light">
-                  {supportTier}
-                </Pill>
-              )}
-
+            <div className="flex items-center gap-x-2">
               {!!store && (
-                <Pill appearance="scrim" brand="light" iconPath={knownStore?.iconPath}>
+                <Pill appearance="scrim" brand="light" icon={knownStore?.icon}>
                   {knownStore?.label ?? titleCase(store)}
                 </Pill>
               )}
 
+              {!!supportTier && (
+                <Pill appearance="scrim" brand="light" className="ml-auto">
+                  {supportTier}
+                </Pill>
+              )}
+
               {!!menu && (
-                <div className="ml-auto">
+                <div className={supportTier ? undefined : "ml-auto"}>
                   <Tooltip content={t("More")} disabled={open} placement="top">
                     <PopoverButton
                       appearance="scrim"
@@ -129,7 +128,7 @@ export const GameTile = ({
                       aria-label={menu.label}
                       brand="neutral"
                       className={revealedWhenActive}
-                      leftIconPath={mdiDotsVertical}
+                      leftIcon="more_vert"
                       size="sm"
                     />
                   </Tooltip>
@@ -155,7 +154,7 @@ export const GameTile = ({
                     placement="top"
                   >
                     <div className={joinClasses(["flex items-center gap-x-1", revealedWhenActive])}>
-                      <Icon className="text-primary-moderate" path={mdiAccount} size="xs" />
+                      <Icon filled className="text-primary-moderate" name="person" size="xs" />
 
                       <Typography
                         appearance="moderate"
