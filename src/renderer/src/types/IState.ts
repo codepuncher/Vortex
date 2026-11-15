@@ -164,6 +164,8 @@ export interface IExtensionState {
   modId?: number;
   /** Nexus Mods file ID for this specific version of the extension. */
   fileId?: number;
+  /** The Nexus Mods game the extension is for, as the extension catalog names it. Game extensions only. */
+  nexus?: { gameId: GameId; gameDomain: GameDomain };
   /** Nexus Mods endorsed status of the extension mod page. */
   endorsed: EndorsedStatus;
   /** Set when the user declined linking this unlinked extension to its Nexus Mods page. */
@@ -269,6 +271,8 @@ export interface ISettingsGameMode {
   sortManaged: string;
   sortUnmanaged: string;
   sortDetected: string;
+  /** Show the experimental-support dialog before managing a Tier 0 game. Treated as on unless false. */
+  confirmTierZero?: boolean;
 }
 
 export interface ISettingsDownloads {

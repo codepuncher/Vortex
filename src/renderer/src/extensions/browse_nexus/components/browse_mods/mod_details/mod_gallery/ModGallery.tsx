@@ -6,6 +6,11 @@ import { Button } from "@/ui/components/button/Button";
 import { AdultAwareImage } from "@/ui/components/image/AdultAwareImage";
 import { joinClasses } from "@/ui/utils/joinClasses";
 
+import type {
+  GalleryDirection,
+  SelectionInput,
+} from "../../../../hooks/browse_mods_tracking/browseModsTracker";
+
 /** One picture in a mod's gallery, as the API sends it, with its title where it has one. */
 export type IGalleryImage = ModImage & { title?: string };
 
@@ -25,8 +30,10 @@ interface IModGalleryProps {
   isAdult: boolean;
   /** Pulses the placeholders, while more pictures are coming. */
   isLoading?: boolean;
-  /** Told the picture now shown large, whenever another is picked. */
-  onPick?: (image: IGalleryImage) => void;
+  /** Told the picture now shown large, its index and how it was picked, as another is picked. */
+  onPick?: (image: IGalleryImage, index: number, input: SelectionInput) => void;
+  /** Told which way the strip's arrows paged it. */
+  onPage?: (direction: GalleryDirection) => void;
 }
 
 /**
@@ -35,10 +42,11 @@ interface IModGalleryProps {
  * strip, picks it. The strip always holds at least five slots, each a placeholder until its
  * thumbnail fades in over it, one after another; the empty ones pulse while more pictures load.
  * For a user who blurs adult content, an adult mod's pictures are the server's blurred ones,
- * through `AdultAwareImage`, so the unblurred ones are never fetched. The large picture is never a scroll anchor: a new one
- * sits higher or lower in its 16:9 frame, and the browser would scroll the details to follow it.
+ * through `AdultAwareImage`, so the unblurred ones are never fetched. The large picture is never a
+ * scroll anchor: a new one sits higher or lower in its 16:9 frame, and the browser would scroll
+ * the details to follow it.
  */
-export const ModGallery = ({ images, isAdult, isLoading, onPick }: IModGalleryProps) => {
+export const ModGallery = ({ images, isAdult, isLoading, onPick, onPage }: IModGalleryProps) => {
   const { t } = useTranslation();
   const stripRef = useRef<HTMLDivElement>(null);
   const thumbnailsRef = useRef<Array<HTMLButtonElement | null>>([]);
@@ -72,9 +80,9 @@ export const ModGallery = ({ images, isAdult, isLoading, onPick }: IModGalleryPr
     return () => observer.disconnect();
   }, [images]);
 
-  const pick = (index: number) => {
+  const pick = (index: number, input: SelectionInput) => {
     setPicked(index);
-    onPick?.(images[index]);
+    onPick?.(images[index], index, input);
     thumbnailsRef.current[index]?.focus();
     thumbnailsRef.current[index]?.scrollIntoView({ block: "nearest", inline: "nearest" });
   };
@@ -89,14 +97,16 @@ export const ModGallery = ({ images, isAdult, isLoading, onPick }: IModGalleryPr
     }
 
     event.preventDefault();
-    pick(next);
+    pick(next, "keyboard");
   };
 
-  const page = (direction: 1 | -1) =>
+  const page = (direction: 1 | -1) => {
     stripRef.current?.scrollBy({
       left: direction * stripRef.current.clientWidth,
       behavior: "smooth",
     });
+    onPage?.(direction === 1 ? "forward" : "back");
+  };
 
   const shown = images[picked] ?? images[0];
 
@@ -165,7 +175,7 @@ export const ModGallery = ({ images, isAdult, isLoading, onPick }: IModGalleryPr
                     }}
                     tabIndex={index === picked ? 0 : -1}
                     type="button"
-                    onClick={() => pick(index)}
+                    onClick={() => pick(index, "pointer")}
                   >
                     <AdultAwareImage
                       alt=""

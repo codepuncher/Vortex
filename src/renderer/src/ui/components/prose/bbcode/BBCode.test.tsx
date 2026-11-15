@@ -1,13 +1,14 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BBCode } from "./BBCode";
 
 // The user's adult content setting is unknown, so adult images blur, as they do logged out.
 vi.mock("react-redux", () => ({ useSelector: () => undefined }));
 vi.mock("@/extensions/nexus_integration/selectors", () => ({ userInfo: () => undefined }));
+vi.mock("@/controls/Icon", () => ({ default: () => null }));
 
 describe("BBCode", () => {
   it("renders the tags in the app's prose styles", () => {
@@ -46,6 +47,13 @@ describe("BBCode", () => {
         "https://staticdelivery.nexusmods.com/mods/1704/images/a.png",
       );
       expect(container.querySelector("img")).toHaveClass("nxm-image-media-blurred");
+    });
+
+    it("shows an image held in the description itself", () => {
+      const src = "data:image/png;base64,iVBORw0KGgo=";
+      const { container } = render(<BBCode bbcode={`[img]${src}[/img]`} />);
+
+      expect(container.querySelector("img")).toHaveAttribute("src", src);
     });
 
     it("leaves out images from elsewhere", () => {
@@ -96,6 +104,81 @@ describe("BBCode", () => {
         "https://staticdelivery.nexusmods.com/mods/1704/images/after.png",
       ]);
     });
+
+    it("shows only Nexus Mods images in a [more] popover", async () => {
+      const { container } = render(
+        <BBCode bbcode="[more id=info name=Info]![a](https://staticdelivery.nexusmods.com/mods/1704/images/a.png) ![b](https://i.imgur.com/b.png)[/more]" />,
+      );
+
+      await userEvent.click(container.querySelector(".more-link button"));
+
+      expect(
+        Array.from(document.querySelectorAll("img"), (img) => img.getAttribute("src")),
+      ).toEqual(["https://staticdelivery.nexusmods.com/mods/1704/images/a.png"]);
+    });
+
+    it("blurs a [more] popover's images for an adult mod", async () => {
+      const { container } = render(
+        <BBCode
+          isFromAdultContent
+          bbcode="[more id=info name=Info]![a](https://staticdelivery.nexusmods.com/mods/1704/images/a.png)[/more]"
+        />,
+      );
+
+      await userEvent.click(container.querySelector(".more-link button"));
+
+      expect(document.querySelector("img")).toHaveClass("nxm-image-media-blurred");
+    });
+
+    it("draws a table without the background its parameters ask for", () => {
+      const { container } = render(
+        <BBCode bbcode="[table background=https://i.imgur.com/a.png][tr][td background=https://i.imgur.com/b.png]Cell[/td][/tr][/table]" />,
+      );
+
+      expect(screen.getByText("Cell").tagName).toBe("TD");
+      expect(container.querySelector("[background]")).toBeNull();
+    });
+  });
+
+  it("keeps how far a table cell spans and where its text sits", () => {
+    render(
+      <BBCode bbcode='[table][tr][th colspan=2 align="center"]Header[/th][/tr][tr][td rowspan=2]A[/td][td]B[/td][/tr][/table]' />,
+    );
+
+    expect(screen.getByText("Header")).toHaveAttribute("colspan", "2");
+    // As a style, since the prose styles' own alignment would win over the attribute.
+    expect(screen.getByText("Header")).toHaveStyle({ textAlign: "center" });
+    expect(screen.getByText("A")).toHaveAttribute("rowspan", "2");
+  });
+
+  it("keeps a table's and its cells' size and a cell's vertical alignment", () => {
+    render(
+      <BBCode bbcode='[table width="100%"][tr][td width=200 height=50% valign=top]A[/td][/tr][/table]' />,
+    );
+
+    expect(screen.getByRole("table")).toHaveStyle({ width: "100%" });
+    expect(screen.getByText("A")).toHaveStyle({
+      width: "200px",
+      height: "50%",
+      verticalAlign: "top",
+    });
+  });
+
+  it("drops a table cell's span, size or alignment that isn't one", () => {
+    render(
+      <BBCode bbcode="[table width=url(x)][tr][td colspan=url(x) width=calc(1px) align=https://i.imgur.com/a.png valign=url(x)]A[/td][/tr][/table]" />,
+    );
+
+    expect(screen.getByRole("table")).not.toHaveAttribute("style");
+    expect(screen.getByText("A")).not.toHaveAttribute("colspan");
+    expect(screen.getByText("A")).not.toHaveAttribute("style");
+  });
+
+  it("draws a plain tag given a style, without it", () => {
+    render(<BBCode bbcode="[b style=color:red]bold[/b]" />);
+
+    expect(screen.getByText("bold").tagName).toBe("STRONG");
+    expect(screen.getByText("bold")).not.toHaveAttribute("style");
   });
 
   describe("embeds", () => {
@@ -224,6 +307,38 @@ describe("BBCode", () => {
         "file:///C:/notes.txt",
       );
     });
+
+    describe("when clicked", () => {
+      const openUrl = vi.fn();
+
+      beforeEach(() => {
+        openUrl.mockClear();
+        vi.stubGlobal("api", { ...window.api, shell: { openUrl } });
+      });
+
+      afterEach(() => {
+        vi.unstubAllGlobals();
+      });
+
+      it("opens a web page in the browser", async () => {
+        render(<BBCode bbcode="[url=https://example.com/page]the page[/url]" />);
+
+        await userEvent.click(screen.getByRole("link", { name: "the page" }));
+
+        expect(openUrl).toHaveBeenCalledWith("https://example.com/page");
+      });
+
+      // A file: link is a URL, so it goes the same way and main hands it to the OS.
+      it("opens an allowed local file by its URL", async () => {
+        render(
+          <BBCode bbcode="[url=file:///C:/notes.txt]notes[/url]" context={{ allowLocal: true }} />,
+        );
+
+        await userEvent.click(screen.getByRole("link", { name: "notes" }));
+
+        expect(openUrl).toHaveBeenCalledWith("file:///C:/notes.txt");
+      });
+    });
   });
 
   describe("size", () => {
@@ -255,6 +370,83 @@ describe("BBCode", () => {
 
       expect(screen.getByText("careful")).not.toHaveAttribute("class");
       expect(container).toHaveTextContent("Be careful now");
+    });
+  });
+
+  describe("external images", () => {
+    const externalImagePlaceholders = {
+      websiteUrl: "https://www.nexusmods.com/skyrimspecialedition/mods/1",
+    };
+    const imgur = (name: string) => `[img]https://i.imgur.com/${name}.png[/img]`;
+    const placeholders = () => screen.queryAllByRole("button", { name: "View on website" });
+
+    it("leaves them out without a word unless asked for placeholders", () => {
+      const { container } = render(<BBCode bbcode={`Before ${imgur("a")} after`} />);
+
+      expect(placeholders()).toHaveLength(0);
+      expect(container.querySelector("img")).toBeNull();
+    });
+
+    it("stands in for one with a placeholder, never loading it", () => {
+      const { container } = render(
+        <BBCode
+          bbcode={`Before ${imgur("a")} after`}
+          externalImagePlaceholders={externalImagePlaceholders}
+        />,
+      );
+
+      expect(placeholders()).toHaveLength(1);
+      expect(screen.getByText("External image")).toBeInTheDocument();
+      expect(container.querySelector("img")).toBeNull();
+    });
+
+    it("leaves images from Nexus Mods as they are", () => {
+      const { container } = render(
+        <BBCode
+          bbcode="[img]https://staticdelivery.nexusmods.com/mods/1704/images/a.png[/img]"
+          externalImagePlaceholders={externalImagePlaceholders}
+        />,
+      );
+
+      expect(placeholders()).toHaveLength(0);
+      expect(container.querySelector("img")).not.toBeNull();
+    });
+
+    it("stands in for a run of them, with only line breaks between, with one placeholder", () => {
+      render(
+        <BBCode
+          bbcode={`${imgur("a")}\n${imgur("b")}[br][/br]${imgur("c")}`}
+          externalImagePlaceholders={externalImagePlaceholders}
+        />,
+      );
+
+      expect(placeholders()).toHaveLength(1);
+      expect(screen.getByText("+2")).toBeInTheDocument();
+      expect(document.querySelectorAll(".nxm-prose br")).toHaveLength(0);
+    });
+
+    it("gives images with text between them a placeholder each", () => {
+      render(
+        <BBCode
+          bbcode={`${imgur("a")} and ${imgur("b")}`}
+          externalImagePlaceholders={externalImagePlaceholders}
+        />,
+      );
+
+      expect(placeholders()).toHaveLength(2);
+    });
+
+    it("keeps where a linked image links to", () => {
+      render(
+        <BBCode
+          bbcode={`[url=https://discord.gg/abc]${imgur("a")}[/url]`}
+          externalImagePlaceholders={externalImagePlaceholders}
+        />,
+      );
+
+      expect(placeholders()).toHaveLength(1);
+      expect(screen.getByText("Linked external image")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "discord.gg" })).toBeInTheDocument();
     });
   });
 });

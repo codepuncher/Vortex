@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Mod } from "@/extensions/nexus_integration/queries/mod/mod.query";
 import type { ModSummary } from "@/extensions/nexus_integration/queries/mod_search/modSearch.query";
+import { browseModsTracking } from "@/test-utils/browseModsTracking";
 import type { IExtensionApi } from "@/types/IExtensionContext";
 import { queryClient } from "@/util/queryClient";
 
@@ -21,6 +22,13 @@ vi.mock("@/extensions/nexus_integration/nexusV3Client", () => ({
   }),
 }));
 
+// The install button has tests of its own.
+vi.mock("./mod_install_button/ModInstallButton", () => ({ ModInstallButton: () => null }));
+vi.mock("../../../hooks/use_mod_status/useModStatus.hook", () => ({
+  useModStatus: () => ({ installState: { kind: "none" }, status: "update" }),
+}));
+
+import type { IGalleryImage } from "./mod_gallery/ModGallery";
 import { ModDetails } from "./ModDetails";
 
 const summary = {
@@ -57,18 +65,37 @@ const respond = (mod: Mod) => act(async () => mocks.pending.shift()!.resolve(mod
 /** Fails the waiting mod query. */
 const fail = () => act(async () => mocks.pending.shift()!.reject(new Error("offline")));
 
-const renderComponent = (mod = summary, onFocusList = vi.fn()) => {
+/** One of a mod's pictures, in each size. */
+const image = (name: string) =>
+  ({
+    id: name,
+    url: `${name}.png`,
+    thumbnail_url: `${name}-thumb.png`,
+    large_thumbnail_url: `${name}-large.png`,
+    blurred_thumbnail_url: `${name}-blurred.png`,
+    blurred_large_thumbnail_url: `${name}-blurred-large.png`,
+  }) as unknown as IGalleryImage;
+
+let tracking: ReturnType<typeof browseModsTracking>;
+
+/** The properties of the events of one name. */
+const propertiesOf = (eventName: string) =>
+  tracking.tracked(eventName).map(({ properties }) => properties);
+
+const renderComponent = (mod = summary, onFocusList = vi.fn(), gallery: IGalleryImage[] = []) => {
   const client = new QueryClient({ defaultOptions: queryClient.getDefaultOptions() });
+  tracking = browseModsTracking();
   render(
     <QueryClientProvider client={client}>
       <ModDetails
         api={{} as IExtensionApi}
-        gallery={[]}
+        gallery={gallery}
         mod={mod}
         onFocusList={onFocusList}
         onPick={vi.fn()}
       />
     </QueryClientProvider>,
+    { wrapper: tracking.wrapper },
   );
   return client;
 };
@@ -85,6 +112,14 @@ describe("ModDetails", () => {
     expect(screen.getByText("User Interface")).toBeInTheDocument();
     expect(screen.getByText("1k")).toBeInTheDocument();
     expect(screen.queryByText("better")).not.toBeInTheDocument();
+  });
+
+  it("titles the details with the mod's name, as a heading", () => {
+    renderComponent();
+
+    const title = screen.getByTestId("mod-details-title");
+    expect(title.tagName).toBe("H2");
+    expect(title).toHaveTextContent(summary.name);
   });
 
   it("holds the gallery's place, pulsing, until the mod's pictures load", async () => {
@@ -145,6 +180,12 @@ describe("ModDetails", () => {
     renderComponent({ ...summary, adult: true } as ModSummary);
 
     expect(screen.getByText("Adult")).toBeInTheDocument();
+  });
+
+  it("says what the user has of the mod", () => {
+    renderComponent();
+
+    expect(screen.getByText("Update available")).toBeInTheDocument();
   });
 
   it("keeps the search's counts when the mod's differ", async () => {
@@ -240,5 +281,122 @@ describe("ModDetails", () => {
     await userEvent.keyboard(keys);
 
     expect(onFocusList).not.toHaveBeenCalled();
+  });
+
+  it("counts opening the mod page", async () => {
+    const openUrl = vi.fn();
+    vi.stubGlobal("api", { ...window.api, shell: { openUrl } });
+    renderComponent();
+
+    await userEvent.click(screen.getByRole("button", { name: "Open mod page" }));
+
+    expect(openUrl).toHaveBeenCalledWith("https://www.nexusmods.com/skyrimspecialedition/mods/1");
+    expect(propertiesOf("browse_mods_mod_page_opened")).toEqual([{ mod_uid: "1704-1" }]);
+    vi.unstubAllGlobals();
+  });
+
+  it("counts picking a picture in the gallery", async () => {
+    renderComponent(summary, vi.fn(), [image("a"), image("b")]);
+
+    await userEvent.click(screen.getAllByRole("button", { name: /^Image/ })[1]);
+
+    expect(propertiesOf("browse_mods_gallery_image_selected")).toEqual([
+      { mod_uid: "1704-1", image_index: 2, image_count: 2, input: "pointer" },
+    ]);
+  });
+
+  it("counts picking a picture with the keys as the keyboard", async () => {
+    renderComponent(summary, vi.fn(), [image("a"), image("b")]);
+    act(() => screen.getAllByRole("button", { name: /^Image/ })[0].focus());
+
+    await userEvent.keyboard("{ArrowRight}");
+
+    expect(propertiesOf("browse_mods_gallery_image_selected")).toEqual([
+      { mod_uid: "1704-1", image_index: 2, image_count: 2, input: "keyboard" },
+    ]);
+  });
+
+  it("counts paging the gallery's strip, and which way", async () => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private readonly onResize: () => void) {}
+        observe = () => this.onResize();
+        disconnect = () => undefined;
+      },
+    );
+    const sizes = { scrollWidth: 1000, clientWidth: 200 };
+    const restore = Object.entries(sizes).map(([key, value]) => {
+      const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, key);
+      Object.defineProperty(HTMLElement.prototype, key, { configurable: true, get: () => value });
+      return () => original && Object.defineProperty(HTMLElement.prototype, key, original);
+    });
+    const { scrollBy } = HTMLElement.prototype;
+    HTMLElement.prototype.scrollBy = vi.fn();
+
+    try {
+      renderComponent(summary, vi.fn(), ["a", "b", "c", "d", "e", "f"].map(image));
+
+      await userEvent.click(await screen.findByRole("button", { name: "Later images" }));
+
+      expect(propertiesOf("browse_mods_gallery_paged")).toEqual([
+        { mod_uid: "1704-1", direction: "forward" },
+      ]);
+    } finally {
+      restore.forEach((undo) => undo());
+      HTMLElement.prototype.scrollBy = scrollBy;
+      vi.unstubAllGlobals();
+    }
+  });
+
+  describe("external images in the description", () => {
+    const imgur = (name: string) => `[img]https://i.imgur.com/${name}.png[/img]`;
+    const description = [
+      `${imgur("a")}\n${imgur("b")}`,
+      "Some text between.",
+      `[url=https://discord.gg/abc]${imgur("c")}[/url]`,
+    ].join("\n");
+
+    it("counts them once for the mod, with how many placeholders they took", async () => {
+      renderComponent();
+      await respond(makeMod({ description }));
+
+      await waitFor(() =>
+        expect(propertiesOf("browse_mods_external_images_shown")).toEqual([
+          { mod_uid: "1704-1", image_count: 3, placeholder_count: 2 },
+        ]),
+      );
+    });
+
+    it("counts opening the mod page, Why? and an image's link from them", async () => {
+      const openUrl = vi.fn();
+      vi.stubGlobal("api", { ...window.api, shell: { openUrl } });
+
+      try {
+        renderComponent();
+        await respond(makeMod({ description }));
+
+        await userEvent.click(
+          (await screen.findAllByRole("button", { name: "View on website" }))[0],
+        );
+        await userEvent.click(screen.getByRole("button", { name: "discord.gg" }));
+        await userEvent.click(screen.getAllByRole("button", { name: "Why?" })[0]);
+
+        expect(openUrl).toHaveBeenCalledWith(
+          "https://www.nexusmods.com/skyrimspecialedition/mods/1",
+        );
+        expect(propertiesOf("browse_mods_external_images_website_opened")).toEqual([
+          { mod_uid: "1704-1", image_count: 2, source: "placeholder" },
+        ]);
+        expect(propertiesOf("browse_mods_external_images_why_opened")).toEqual([
+          { mod_uid: "1704-1" },
+        ]);
+        expect(propertiesOf("browse_mods_external_image_link_opened")).toEqual([
+          { mod_uid: "1704-1", link_domain: "discord.gg" },
+        ]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 });

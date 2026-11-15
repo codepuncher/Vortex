@@ -7,6 +7,7 @@ import type { IExtensionApi } from "@/types/IExtensionContext";
 import { TabBar } from "@/ui/components/tabs/TabBar";
 import { TabButton } from "@/ui/components/tabs/TabButton";
 import { TabPanel } from "@/ui/components/tabs/TabPanel";
+import { useTabContext } from "@/ui/components/tabs/Tabs.context";
 import { joinClasses } from "@/ui/utils/joinClasses";
 import { PageHeader } from "@/views/components/Page/PageHeader";
 
@@ -30,30 +31,37 @@ interface IBrowseSectionsProps {
   api: IExtensionApi;
   /** Whether the mods are browsable, or only say they're coming soon. */
   isModsEnabled: boolean;
+  /** Whether the mods are on screen: the page open on their tab. */
+  isModsShown: boolean;
   /** Whether Vortex can handle collections for the game, and so gives them a tab. */
   supportsCollections: boolean;
 }
 
 /**
- * The open game's mods and collections, under the header with a tab for each. `BrowsePage` keys
- * it by the game, so a sort, search or page picked for one game starts over in the next, and
- * nothing of one game's shows in another's.
+ * The open game's mods and collections, under the header with a tab for each, its title marked
+ * beta while the mods are open. `BrowsePage` keys it by the game, so a search or page picked for
+ * one game starts over in the next, and no game's results show in another's. The mods' views, the
+ * open one and the presets' changes are kept across games.
  */
 export const BrowseSections = ({
   api,
   isModsEnabled,
+  isModsShown,
   supportsCollections,
 }: IBrowseSectionsProps) => {
   const { t } = useTranslation();
   const subtitle = pageSubtitle(t, useSelector(currentGame)?.name);
   const collections = useCollectionSearch(api);
   const mods = useModSearch(api, { isEnabled: isModsEnabled });
+  const { selectedTab } = useTabContext();
+  const isModsTab = isModsEnabled && selectedTab === "mods";
 
   return (
     <>
       <PageHeader
         isFullWidth
         className="bg-surface-low"
+        isBeta={isModsTab}
         pictogramName="nexus-mods"
         subtitle={subtitle}
         title={t("Browse")}
@@ -82,7 +90,11 @@ export const BrowseSections = ({
         ])}
         id="mods"
       >
-        {isModsEnabled ? <BrowseMods api={api} search={mods} /> : <ModsComingSoon api={api} />}
+        {isModsEnabled ? (
+          <BrowseMods api={api} isShown={isModsShown} search={mods} />
+        ) : (
+          <ModsComingSoon api={api} />
+        )}
       </TabPanel>
 
       {supportsCollections && (

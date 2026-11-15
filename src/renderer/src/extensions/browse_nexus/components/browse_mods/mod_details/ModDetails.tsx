@@ -1,14 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
+import { GameDomain } from "@vortex/shared";
 import numeral from "numeral";
 import React, { forwardRef, type KeyboardEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { NEXUS_BASE_URL } from "@/extensions/nexus_integration/constants";
 import { modQuery } from "@/extensions/nexus_integration/queries/mod/mod.query";
 import type { ModSummary } from "@/extensions/nexus_integration/queries/mod_search/modSearch.query";
+import { nexusModPageUrl } from "@/extensions/nexus_integration/util/nexus_urls/nexusUrls";
 import type { IExtensionApi } from "@/types/IExtensionContext";
 import { Author } from "@/ui/components/author/Author";
 import { Button } from "@/ui/components/button/Button";
+import { Pill } from "@/ui/components/pill/Pill";
 import { BBCode } from "@/ui/components/prose/bbcode/BBCode";
 import { TabBar } from "@/ui/components/tabs/TabBar";
 import { TabButton } from "@/ui/components/tabs/TabButton";
@@ -19,7 +21,13 @@ import { Typography } from "@/ui/components/typography/Typography";
 import { hasModifierKey } from "@/ui/utils/hasModifierKey";
 import { useRelativeTime } from "@/util/useRelativeTime";
 
+import { useBrowseModsTracker } from "../../../hooks/browse_mods_tracking/BrowseModsTracking.context";
+import { useDescriptionImagePlaceholders } from "../../../hooks/use_description_image_placeholders/useDescriptionImagePlaceholders.hook";
+import { useModStatus } from "../../../hooks/use_mod_status/useModStatus.hook";
+import { modStatusDisplay } from "../../../util/mod_status/modStatus";
 import { type IGalleryImage, ModGallery } from "./mod_gallery/ModGallery";
+import { ModInstallButton } from "./mod_install_button/ModInstallButton";
+import { ModMenu } from "./mod_menu/ModMenu";
 import { ModTags } from "./mod_tags/ModTags";
 import { ModDetailsDescriptionSkeleton } from "./ModDetailsDescription.skeleton";
 
@@ -42,17 +50,29 @@ interface IModDetailsProps {
 const OWNS_LEFT = 'input, textarea, select, [contenteditable="true"], [role="tablist"]';
 
 /**
- * The picked mod's details: gallery, stats, author, pills and description. Shows the
- * search's result at once, and the tags and description once the mod's own query has them.
+ * The picked mod's details: gallery, stats, author, what the user has of it, pills and description. Shows the
+ * search's result at once, and the tags and description once the mod's own query has them, with
+ * 1-click install of its main file beside the mod page link. Counts opening the mod page, and
+ * the gallery's picks and paging.
  */
 export const ModDetails = forwardRef<HTMLDivElement, IModDetailsProps>(
   ({ api, mod, gallery, onPick, onFocusList }, ref) => {
     const { t } = useTranslation();
     const details = useQuery(modQuery(api, mod.id));
     const tags = details.data?.tags ?? [];
+    const hasFailed = details.isError && !details.data;
     const [tab, setTab] = useState("details");
-    const updated = useRelativeTime(new Date(mod.updated_at).getTime(), t);
-    const created = useRelativeTime(new Date(mod.created_at).getTime(), t);
+    const updated = useRelativeTime(Date.parse(mod.updated_at), t);
+    const created = useRelativeTime(Date.parse(mod.created_at), t);
+    const tracker = useBrowseModsTracker();
+    const domain = GameDomain(mod.game.domain_name);
+    const modPageUrl = nexusModPageUrl(domain, mod.game_scoped_id);
+    const { installState, status } = useModStatus(mod);
+    const statusDisplay = status && modStatusDisplay(t, status);
+    const externalImagePlaceholders = useDescriptionImagePlaceholders({
+      modUid: mod.id,
+      modPageUrl,
+    });
 
     /**
      * Left leaves the details for the list, unless what's focused has used the key or uses Left
@@ -85,7 +105,7 @@ export const ModDetails = forwardRef<HTMLDivElement, IModDetailsProps>(
     return (
       <div
         aria-label={t("Mod details")}
-        className="flex min-h-0 min-w-0 flex-1 flex-col has-[>:focus-visible]:outline-2 has-[>:focus-visible]:-outline-offset-2 has-[>:focus-visible]:outline-focus-subdued"
+        className="flex min-h-0 min-w-0 flex-1 flex-col focus-ring-inset"
         role="region"
         onKeyDown={leaveOnLeft}
       >
@@ -104,23 +124,30 @@ export const ModDetails = forwardRef<HTMLDivElement, IModDetailsProps>(
               {/* <TabButton name={t("Comments")} panelId="comments" /> */}
             </TabBar>
 
-            {/* <Button leftIcon="download" size="sm">
-                {t("1-click install")}
-              </Button> */}
+            <div className="flex items-center gap-x-2">
+              <ModMenu api={api} mod={mod} modPageUrl={modPageUrl} />
 
-            <Tooltip content={t("Open mod page")}>
-              <Button
-                appearance="moderate"
-                aria-label={t("Open mod page")}
-                brand="neutral"
-                leftIcon="open_in_new"
-                onClick={() =>
-                  window.api.shell.openUrl(
-                    [NEXUS_BASE_URL, mod.game.domain_name, "mods", mod.game_scoped_id].join("/"),
-                  )
-                }
+              <Tooltip content={t("Open mod page")}>
+                <Button
+                  appearance="moderate"
+                  aria-label={t("Open mod page")}
+                  brand="neutral"
+                  leftIcon="open_in_new"
+                  onClick={() => {
+                    window.api.shell.openUrl(modPageUrl);
+                    tracker.trackModPageOpened({ mod_uid: mod.id });
+                  }}
+                />
+              </Tooltip>
+
+              <ModInstallButton
+                api={api}
+                installState={installState}
+                isError={hasFailed}
+                mainFile={details.data?.main_file_version}
+                mod={mod}
               />
-            </Tooltip>
+            </div>
           </div>
 
           <div
@@ -135,13 +162,22 @@ export const ModDetails = forwardRef<HTMLDivElement, IModDetailsProps>(
                   isAdult={mod.adult}
                   isLoading={details.isPending}
                   key={mod.id}
-                  onPick={onPick}
+                  onPage={(direction) => tracker.trackGalleryPaged({ mod_uid: mod.id, direction })}
+                  onPick={(image, index, input) => {
+                    onPick(image);
+                    tracker.trackGalleryImageSelected({
+                      mod_uid: mod.id,
+                      image_index: index + 1,
+                      image_count: gallery.length,
+                      input,
+                    });
+                  }}
                 />
 
                 <div className="@container border-y border-stroke-weak py-4">
-                  <div className="grid grid-cols-3 gap-2 @2xl:grid-cols-6">
+                  <div className="grid grid-cols-2 gap-x-2 gap-y-3 @sm:grid-cols-3 @2xl:grid-cols-6 @2xl:justify-items-center">
                     {stats.map(({ label, value }) => (
-                      <div className="min-w-0 justify-self-center" key={label}>
+                      <div className="min-w-0 pl-[max(0px,calc(50%-3rem))] @2xl:pl-0" key={label}>
                         <Typography
                           appearance="subdued"
                           brand="neutral-translucent"
@@ -158,6 +194,16 @@ export const ModDetails = forwardRef<HTMLDivElement, IModDetailsProps>(
                   </div>
                 </div>
 
+                <Typography
+                  appearance="strong"
+                  as="h2"
+                  className="font-semibold"
+                  data-testid="mod-details-title"
+                  typographyType="body-xl"
+                >
+                  {mod.name}
+                </Typography>
+
                 <div className="flex flex-wrap items-center gap-x-1 gap-y-2">
                   <Typography
                     appearance="moderate"
@@ -170,6 +216,16 @@ export const ModDetails = forwardRef<HTMLDivElement, IModDetailsProps>(
 
                   <span aria-hidden className="mx-1 h-5.5 w-px bg-stroke-weak" />
 
+                  {!!statusDisplay && (
+                    <>
+                      <Pill brand={statusDisplay.brand} icon={statusDisplay.icon}>
+                        {statusDisplay.label}
+                      </Pill>
+
+                      <span aria-hidden className="mx-1 h-5.5 w-px bg-stroke-weak" />
+                    </>
+                  )}
+
                   <ModTags
                     category={mod.category?.name}
                     isAdult={mod.adult}
@@ -181,7 +237,7 @@ export const ModDetails = forwardRef<HTMLDivElement, IModDetailsProps>(
                 <div className="pt-6">
                   {details.isPending && <ModDetailsDescriptionSkeleton />}
 
-                  {details.isError && !details.data && (
+                  {hasFailed && (
                     <Typography appearance="subdued" brand="neutral-translucent">
                       {t("The mod's description couldn't be loaded.")}
                     </Typography>
@@ -191,6 +247,7 @@ export const ModDetails = forwardRef<HTMLDivElement, IModDetailsProps>(
                     <BBCode
                       bbcode={details.data.description}
                       className="text-neutral-strong"
+                      externalImagePlaceholders={externalImagePlaceholders}
                       isFromAdultContent={mod.adult}
                     />
                   )}

@@ -1,129 +1,146 @@
-import React, { type KeyboardEvent, type RefObject, useRef } from "react";
+import numeral from "numeral";
+import React, {
+  type ReactNode,
+  type Ref,
+  useCallback,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+} from "react";
 import { useTranslation } from "react-i18next";
 
 import type { ModSummary } from "@/extensions/nexus_integration/queries/mod_search/modSearch.query";
 import { Listing } from "@/ui/components/listing/Listing";
-import { Pagination } from "@/ui/components/pagination/Pagination";
-import { hasModifierKey } from "@/ui/utils/hasModifierKey";
-import { rovingFocus } from "@/ui/utils/roving_focus/rovingFocus";
+import {
+  type ListingStatus,
+  type LoadMoreSource,
+  PAGES_BEFORE_PAUSE,
+} from "@/ui/components/listing/listing_status/listingStatus";
 import { PageScroll } from "@/views/components/Page/PageScroll";
 
-import { MAX_PAGES, MODS_PER_PAGE } from "../../../hooks/use_mod_search/useModSearch.hook";
+import type { SelectionInput } from "../../../hooks/browse_mods_tracking/browseModsTracker";
+import { useModListKeyboard } from "../../../hooks/use_mod_list_keyboard/useModListKeyboard.hook";
+import { useModListVirtualizer } from "../../../hooks/use_mod_list_virtualizer/useModListVirtualizer.hook";
+import { MODS_PER_PAGE } from "../../../hooks/use_mod_search/useModSearch.hook";
+import { isBreakNudgePause } from "../../../util/break_nudge/breakNudge";
 import { ModCard } from "../mod_card/ModCard";
 import { ModCardSkeleton } from "../mod_card/ModCard.skeleton";
 
+/** How often, in mods, Load more nudges the user back to their game, at the first pause past. */
+const NUDGE_EVERY_MODS = 600;
+
 interface IModListProps {
-  /** The page's mods, in order. */
+  /** The mods loaded so far, in order. */
   mods: ModSummary[];
-  /** The id of the mod the details pane shows, which may be on another page. */
+  /** Which search they're from; a change scrolls back to the top. */
+  searchKey: string;
+  /** The picked mod's id, which the details show once a keyboard pick settles; maybe not listed. */
   activeModId: string | undefined;
-  /** Shows another mod in the details pane, by id. */
-  onSelectMod: (id: string) => void;
-  /** The page showing, from 1. */
-  currentPage: number;
-  /** Moves to another page. */
-  onPageChange: (page: number) => void;
-  /** How many mods the search found, over every page. */
+  /** Picks another mod, by id, told how it was picked. */
+  onSelectMod: (id: string, input: SelectionInput) => void;
+  /** Where the pages' loading is. */
+  status: ListingStatus;
+  /** How many mods the search found, for the count over Load more. */
   totalCount: number;
-  /** Whether a page is loading. */
-  isLoading: boolean;
-  /** Whether the page failed to load. */
-  isError: boolean;
-  /** Asks for the page again, after it failed. */
+  /** How many pages have loaded, for the note over Load more, which counts them in full pages. */
+  pagesLoaded: number;
+  /** Asks for the next page: as the list's end nears, or from Load more, back on the last card. */
+  onLoadMore: (source: LoadMoreSource) => void;
+  /** Asks for the page that failed again; focus goes to the list, as the Try again button goes. */
   onRetry: () => void;
-  /** The details pane, for Right to move focus to. */
-  detailsRef: RefObject<HTMLDivElement>;
-  /** The list itself, for the details pane's Left to move focus back to. */
-  listRef?: RefObject<HTMLDivElement>;
+  /** Moves focus into the details pane, for Right from a card. */
+  onFocusDetails: () => void;
+  /** Called as Down moves focus past the last mod onto Load more, passing rather than stopping. */
+  onPassLastMod?: () => void;
+  /** Shown in place of the mods when there are none. */
+  emptyState: ReactNode;
+  /** Shown after the last card once the last page has loaded. */
+  endOfResults: ReactNode;
+  /** Shown under the Load more button while loading is paused. */
+  loadMoreFooter?: ReactNode;
+  /** The list, for moving focus back into it or onto its open mod. */
+  listRef?: Ref<IModListHandle>;
 }
 
-/** Which mod each key picks from the list itself, rather than from a mod. */
-const FROM_LIST: Partial<Record<string, "first" | "last">> = {
-  ArrowDown: "first",
-  Home: "first",
-  ArrowUp: "last",
-  End: "last",
-};
+/** What the list lets its page do with focus. */
+export interface IModListHandle {
+  /** Focuses the list itself. */
+  focus: () => void;
+  /** Focuses the open mod's card, the list's Tab stop. */
+  focusOpenMod: () => void;
+}
 
 /**
- * Browse's list of mods, with pagination that stays through a failed page, which offers to try
- * again. One Tab stop, the open mod or else the first; Up, Down, Home and End pick a mod, and
- * Right moves focus into the details. A change of page focuses the list itself, picking nothing
- * until Down or Up picks its first or last mod.
+ * Browse's list of mods, loading more as its end scrolls into view, and rendering only the cards
+ * near it. A later page that fails offers to try again where it would go. One Tab stop, the open
+ * mod or else the first; Up, Down, Home and End pick a mod, and Right moves focus into the
+ * details. A mod picked from the keyboard is focused once it renders, which it does as the open
+ * one wherever it is. Another search scrolls back to the top. With no mods it shows the empty
+ * state, and once the last page has loaded, the end of results after it.
  */
 export const ModList = ({
   mods,
+  searchKey,
   activeModId,
   onSelectMod,
-  detailsRef,
+  onFocusDetails,
+  onPassLastMod,
   listRef,
-  currentPage,
-  onPageChange,
+  status,
   totalCount,
-  isLoading,
-  isError,
+  pagesLoaded,
+  onLoadMore,
   onRetry,
+  emptyState,
+  endOfResults,
+  loadMoreFooter,
 }: IModListProps) => {
   const { t } = useTranslation();
+  const isLastPageLoaded = !!mods.length && status === "done";
   const scrollRef = useRef<HTMLDivElement>(null);
-  const tabStop = mods.some((mod) => mod.id === activeModId) ? activeModId : mods[0]?.id;
+  const pagedCount = pagesLoaded * MODS_PER_PAGE;
+  const cards = useRef(new Map<number, HTMLElement>()).current;
+  const loadMoreRef = useRef<HTMLButtonElement>(null);
+  const activeIndex = mods.findIndex((mod) => mod.id === activeModId);
+  const tabStop = activeIndex >= 0 ? activeIndex : 0;
+  const virtualizer = useModListVirtualizer({
+    scrollRef,
+    count: mods.length,
+    getItemKey: useCallback((index: number) => mods[index].id, [mods]),
+    keptIndex: mods.length ? tabStop : undefined,
+  });
+  const { scrollToTop } = virtualizer;
+  const shownSearchRef = useRef(searchKey);
 
-  /** Picks the list's first or last mod, as the key asks, and focuses it. */
-  const pickFromList = (event: KeyboardEvent<HTMLDivElement>) => {
-    const end = FROM_LIST[event.key];
-    const cards = [...event.currentTarget.querySelectorAll<HTMLElement>("[data-mod-card]")];
-    const index = end === "last" ? cards.length - 1 : 0;
-
-    if (!end || !cards[index]) {
-      return;
+  useLayoutEffect(() => {
+    if (shownSearchRef.current !== searchKey) {
+      shownSearchRef.current = searchKey;
+      scrollToTop();
     }
+  }, [searchKey, scrollToTop]);
 
-    event.preventDefault();
-    onSelectMod(mods[index].id);
-    cards[index].focus();
-  };
+  useImperativeHandle(
+    listRef,
+    () => ({
+      focus: () => scrollRef.current?.focus(),
+      focusOpenMod: () => cards.get(tabStop)?.focus(),
+    }),
+    [cards, tabStop],
+  );
 
-  /** Moves to another page, focusing the list, which picks no mod until asked. */
-  const changePage = (page: number) => {
-    onPageChange(page);
-    scrollRef.current?.focus();
-  };
-
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const isOnCard = rovingFocus(event, {
-      orientation: "vertical",
-      itemSelector: "[data-mod-card]",
-      onMove: (index) => onSelectMod(mods[index].id),
-    });
-
-    if (isOnCard || hasModifierKey(event)) {
-      return;
-    }
-
-    if (event.target === event.currentTarget) {
-      pickFromList(event);
-      return;
-    }
-
-    if (event.key !== "ArrowRight") {
-      return;
-    }
-
-    const fromCard =
-      event.target instanceof HTMLElement && !!event.target.closest("[data-mod-card]");
-    const details = detailsRef.current;
-
-    if (fromCard && details) {
-      event.preventDefault();
-      details.focus();
-    }
-  };
+  const onKeyDown = useModListKeyboard({
+    cards,
+    mods,
+    searchKey,
+    isLoading: status === "loading",
+    onSelectMod,
+    onFocusDetails,
+    afterLastCardRef: loadMoreRef,
+    onPassLastCard: onPassLastMod,
+  });
 
   return (
-    <div
-      className="scrollbar-inset-6 mr-1 flex min-w-0 flex-1 flex-col has-[>:focus-visible]:outline-2 has-[>:focus-visible]:-outline-offset-2 has-[>:focus-visible]:outline-focus-subdued"
-      ref={listRef}
-    >
+    <div className="scrollbar-inset-6 mr-1 flex min-w-0 flex-1 flex-col focus-ring-inset">
       <PageScroll
         isFullWidth
         aria-label={t("Mods")}
@@ -131,38 +148,93 @@ export const ModList = ({
         ref={scrollRef}
         role="region"
         tabIndex={-1}
+        onBlur={virtualizer.onBlur}
+        onFocus={virtualizer.onFocus}
         onKeyDown={onKeyDown}
       >
         <Listing
           className="flex flex-col gap-y-3.5"
-          errorMessage={t("The mods couldn't be loaded. Try again, or go to another page.")}
-          errorTitle={t("Something went wrong")}
+          customNoResults={emptyState}
           entityCount={mods.length}
-          isError={isError}
-          isLoading={isLoading}
-          noResultsTitle={t("No mods found")}
-          onRetry={onRetry}
+          errorMessage={t("The mods couldn't be loaded. Try again.")}
+          errorTitle={t("Something went wrong")}
+          loadMoreErrorMessage={t("More mods couldn't be loaded. Try again.")}
+          loadMoreFooter={loadMoreFooter}
+          loadMoreLabel={t("Load more mods")}
+          loadMoreNote={
+            isBreakNudgePause({
+              loaded: pagedCount,
+              every: NUDGE_EVERY_MODS,
+              perPause: PAGES_BEFORE_PAUSE * MODS_PER_PAGE,
+            })
+              ? t("{{loaded}} mods later... remember the game you were going to play?", {
+                  loaded: numeral(pagedCount).format("0,0"),
+                })
+              : undefined
+          }
+          loadMoreRef={loadMoreRef}
+          loadMoreSummary={t("Showing {{loaded}} of {{total}} mods", {
+            loaded: numeral(mods.length).format("0,0"),
+            total: numeral(totalCount).format("0,0"),
+          })}
+          scrollRef={scrollRef}
           skeletonCount={6}
           SkeletonTile={ModCardSkeleton}
+          status={status}
+          onLoadMore={(source) => {
+            onLoadMore(source);
+
+            if (source !== "button") {
+              return;
+            }
+
+            const lastCard = cards.get(mods.length - 1);
+
+            if (lastCard) {
+              lastCard.focus({ preventScroll: true });
+              return;
+            }
+
+            scrollRef.current?.focus();
+          }}
+          onRetry={() => {
+            onRetry();
+            scrollRef.current?.focus();
+          }}
         >
-          {mods.map((mod) => (
-            <ModCard
-              isActive={mod.id === activeModId}
-              key={mod.id}
-              mod={mod}
-              tabIndex={mod.id === tabStop ? 0 : -1}
-              onSelect={() => onSelectMod(mod.id)}
-            />
-          ))}
+          <div
+            className="relative -mb-3.5"
+            ref={virtualizer.startRef}
+            style={{ height: virtualizer.totalSize }}
+          >
+            {virtualizer.items.map(({ index, key, start }) => (
+              <div
+                className="absolute inset-x-0 top-0 flex flex-col pb-3.5"
+                data-index={index}
+                key={key}
+                ref={virtualizer.measureElement}
+                style={{ transform: `translateY(${start}px)` }}
+              >
+                <ModCard
+                  isActive={mods[index].id === activeModId}
+                  mod={mods[index]}
+                  ref={(card) => {
+                    if (card) {
+                      cards.set(index, card);
+                      return;
+                    }
+
+                    cards.delete(index);
+                  }}
+                  tabIndex={index === tabStop ? 0 : -1}
+                  onSelect={() => onSelectMod(mods[index].id, "pointer")}
+                />
+              </div>
+            ))}
+          </div>
         </Listing>
 
-        <Pagination
-          currentPage={currentPage}
-          recordsPerPage={MODS_PER_PAGE}
-          scrollRef={scrollRef}
-          totalRecords={Math.min(totalCount, MAX_PAGES * MODS_PER_PAGE)}
-          onPaginationUpdate={changePage}
-        />
+        {isLastPageLoaded && endOfResults}
       </PageScroll>
     </div>
   );

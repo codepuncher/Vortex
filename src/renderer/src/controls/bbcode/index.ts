@@ -1,6 +1,8 @@
 import * as bbcode from "bbcode-to-react";
 import type * as React from "react";
 
+import type { IExternalImagePlaceholderOptions } from "@/ui/components/prose/external_image_placeholder/ExternalImagePlaceholder";
+
 import BrTag from "./BrTag";
 import CompareTag from "./CompareTag";
 import EmbedLinkTag from "./EmbedLinkTag";
@@ -13,6 +15,7 @@ import LinkTag from "./LinkTag";
 import MoreTag from "./MoreTag";
 import SafeImageTag from "./SafeImageTag";
 import SafeLinkTag from "./SafeLinkTag";
+import SAFE_SIMPLE_TAGS from "./SafeSimpleTag";
 import SafeSizeTag from "./SafeSizeTag";
 import SafeSpoilerTag from "./SafeSpoilerTag";
 import SafeStyleTag from "./SafeStyleTag";
@@ -36,17 +39,21 @@ export interface IBBCodeContext {
   callbacks?: { [name: string]: (...args: unknown[]) => void };
   /**
    * if enabled, [link] or [url] tags may link to local files, which then get opened
-   * with opn.
+   * through window.api.shell.
    * This should only be set for bbcode hard coded into Vortex, not bbcode taken from a
    * website or anything for security reasons
    */
   allowLocal?: boolean;
   /** Whether what the bbcode's from, such as a mod, is adult content; blurs its images if set to. */
   isFromAdultContent?: boolean;
+  /** Shows placeholders for images from outside Nexus Mods, which are otherwise left out. */
+  externalImagePlaceholders?: IExternalImagePlaceholderOptions;
 }
 
 const createFullParser = (safe: boolean) => {
   const parser = new bbcode.Parser();
+  // Read by tags that draw bbcode we don't write ourselves differently, such as `[more]`.
+  parser["renderer"].options.safe = safe;
 
   parser.registerTag("size", safe ? SafeSizeTag : SizeTag);
   parser.registerTag("br", BrTag);
@@ -69,6 +76,7 @@ const createFullParser = (safe: boolean) => {
     parser.registerTag("img", SafeImageTag);
     parser.registerTag("compare", CompareTag);
     ["video", "twitter", "soundcloud"].forEach((tag) => parser.registerTag(tag, EmbedLinkTag));
+    Object.entries(SAFE_SIMPLE_TAGS).forEach(([name, tag]) => parser.registerTag(name, tag));
   }
 
   return parser;

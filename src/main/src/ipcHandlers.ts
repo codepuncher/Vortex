@@ -51,7 +51,7 @@ import { relaunch } from "./cli";
 import { getVortexPath } from "./getVortexPath";
 import { hashFile } from "./hash/host";
 import { betterIpcMain } from "./ipc";
-import { openUrl, openFile, showItemInFolder } from "./open";
+import { openUrlString, openFile, showItemInFolder } from "./open";
 import { extraWebViews } from "./webview";
 
 // Type-safe interface for global Redux state accessors
@@ -219,7 +219,7 @@ export function init(fs: FileSystem) {
 
   // Shell
   betterIpcMain.on("shell:openUrl", (_event, url) => {
-    openUrl(new URL(url));
+    openUrlString(url);
   });
 
   betterIpcMain.on("shell:openFile", (_event, filePath) => {
@@ -759,14 +759,20 @@ export function init(fs: FileSystem) {
 
     const entries: EnumerateEntryWire[] = [];
     let done = false;
-    for (let pulled = 0; pulled < max; pulled++) {
-      const step = await session.iterator.next();
-      if (step.done === true) {
-        done = true;
-        break;
-      }
+    try {
+      for (let pulled = 0; pulled < max; pulled++) {
+        const step = await session.iterator.next();
+        if (step.done === true) {
+          done = true;
+          break;
+        }
 
-      entries.push(enumerationEntryToWire(step.value));
+        entries.push(enumerationEntryToWire(step.value));
+      }
+    } catch (err) {
+      // A failed listing cannot continue: evict it so the opendir handle is released.
+      evictEnumeration(handle);
+      throw err;
     }
 
     if (done) {
