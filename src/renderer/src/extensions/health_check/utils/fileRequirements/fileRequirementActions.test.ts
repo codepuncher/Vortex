@@ -1,4 +1,4 @@
-import { GameDomain } from "@vortex/shared";
+import { NexusGameDomain } from "@vortex/shared";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 // The action layer is tested against mocked boundaries: the store selectors, the
@@ -116,7 +116,7 @@ beforeEach(() => {
   mockSetModsEnabled.mockReturnValue(Promise.resolve() as never);
   mockTrackedInstall.mockImplementation((_api, _identity, run) => run());
   vi.mocked(numericGameIdToDomainName).mockImplementation((id) =>
-    id === NEXUS_GAME_ID ? GameDomain("skyrimse") : undefined,
+    id === NEXUS_GAME_ID ? NexusGameDomain("skyrimse") : undefined,
   );
   vi.mocked(knownGames).mockReturnValue([] as never);
   mockActiveProfile.mockReturnValue({ id: "profile-1", gameId: "skyrimse" } as never);
@@ -218,21 +218,23 @@ describe("installDownloadedFile", () => {
 describe("Nexus pages", () => {
   beforeEach(() => {
     vi.mocked(numericGameIdToDomainName).mockImplementation((id) =>
-      id === NEXUS_GAME_ID ? GameDomain("skyrimspecialedition") : undefined,
+      id === NEXUS_GAME_ID ? NexusGameDomain("skyrimspecialedition") : undefined,
     );
   });
 
   test("opens the mod's page", () => {
     openModPage(makeApi(), CANDIDATE);
 
-    expect(openUrl).toHaveBeenCalledWith("https://www.nexusmods.com/skyrimspecialedition/mods/42");
+    expect(openUrl).toHaveBeenCalledWith(
+      "https://www.nexusmods.com/skyrimspecialedition/mods/42?source=vortex_health_check",
+    );
   });
 
   test("opens the file on its mod's Files tab", () => {
     openFilePage(makeApi(), CANDIDATE);
 
     expect(openUrl).toHaveBeenCalledWith(
-      "https://www.nexusmods.com/skyrimspecialedition/mods/42?tab=files&file_id=9001&nmm=1",
+      "https://www.nexusmods.com/skyrimspecialedition/mods/42?tab=files&file_id=9001&nmm=1&source=vortex_health_check",
     );
   });
 

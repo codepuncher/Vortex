@@ -1,4 +1,4 @@
-import { type GameDomain, GameId, VortexGameId } from "@vortex/shared";
+import { type NexusGameDomain, NexusGameId, VortexGameId } from "@vortex/shared";
 
 import { knownGames } from "@/extensions/gamemode_management/selectors";
 import renderModName from "@/extensions/mod_management/util/modName";
@@ -9,6 +9,7 @@ import { downloadAndInstallNexusFile } from "@/extensions/nexus_integration/util
 import {
   nexusFilePageUrl,
   nexusModPageUrl,
+  withVortexSource,
 } from "@/extensions/nexus_integration/util/nexus_urls/nexusUrls";
 import { decodeUID } from "@/extensions/nexus_integration/util/UIDs";
 import { setModsEnabled } from "@/extensions/profile_management/actions/profiles";
@@ -34,10 +35,10 @@ interface INexusFileRef {
 }
 
 /** A ref's mod on Nexus, or undefined when the mod id or domain can't be resolved. */
-function nexusMod(ref: INexusFileRef): { domain: GameDomain; modId: number } | undefined {
+function nexusMod(ref: INexusFileRef): { domain: NexusGameDomain; modId: number } | undefined {
   // modUID is empty when the source data lacked a mod id; decode only when present.
   const mod = ref.modUID ? decodeUID(ref.modUID) : undefined;
-  const domain = mod ? numericGameIdToDomainName(GameId(mod.gameId)) : undefined;
+  const domain = mod ? numericGameIdToDomainName(NexusGameId(mod.gameId)) : undefined;
   return mod && domain ? { domain, modId: mod.id } : undefined;
 }
 
@@ -61,7 +62,7 @@ export async function downloadFileRequirement(
   const mod = decodeUID(candidate.modUID);
   const file = decodeUID(candidate.fileUID);
 
-  const domain = mod ? numericGameIdToDomainName(GameId(mod.gameId)) : undefined;
+  const domain = mod ? numericGameIdToDomainName(NexusGameId(mod.gameId)) : undefined;
   if (!mod || !file || !domain) {
     log("warn", "cannot download file requirement: unresolved ids", {
       fileUID: candidate.fileUID,
@@ -237,7 +238,9 @@ export function openModPage(_api: IExtensionApi, ref: INexusFileRef): void {
     log("warn", "cannot open mod page: unresolved mod id or game", { fileUID: ref.fileUID });
     return;
   }
-  window.api.shell.openUrl(nexusModPageUrl(mod.domain, mod.modId));
+  window.api.shell.openUrl(
+    withVortexSource({ url: nexusModPageUrl(mod.domain, mod.modId), feature: "health_check" }),
+  );
 }
 
 /** Open the file's page on the Nexus website (the specific file, not the mod). */
@@ -248,7 +251,12 @@ export function openFilePage(_api: IExtensionApi, ref: INexusFileRef): void {
     log("warn", "cannot open file page: unresolved mod or file id", { fileUID: ref.fileUID });
     return;
   }
-  window.api.shell.openUrl(nexusFilePageUrl(mod.domain, mod.modId, file.id));
+  window.api.shell.openUrl(
+    withVortexSource({
+      url: nexusFilePageUrl(mod.domain, mod.modId, file.id),
+      feature: "health_check",
+    }),
+  );
 }
 
 /**

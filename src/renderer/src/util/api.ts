@@ -148,7 +148,6 @@ import getTextModManagement from "../extensions/mod_management/texts";
 import getTextProfileManagement from "../extensions/profile_management/texts";
 import deepMerge from "./deepMerge";
 import { runElevated } from "./elevated";
-import { runThreaded } from "./thread";
 import {
   batchDispatch,
   bytesToString,
@@ -175,6 +174,8 @@ import {
 import { Campaign, Section, Content, Overlayable } from "./util";
 import walk from "./walk";
 
+export { actionsToPartialReducerSpec, actionsToReducerSpec, setField } from "../reducers/builder";
+export type { ActionsToReducerMapping } from "../reducers/builder";
 export { request, rawRequest, upload, jsonRequest } from "./network";
 export type { IRequestOptions, Method } from "./network";
 export {
@@ -289,7 +290,6 @@ export {
   ruleInstallSpec,
   rulePhase,
   runElevated,
-  runThreaded,
   sanitizeCSSId,
   sanitizeFilename,
   Section,
